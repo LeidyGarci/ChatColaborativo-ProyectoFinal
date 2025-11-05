@@ -1,0 +1,122 @@
+@startuml
+title Diagrama de Clases - Chat Colaborativo con Salas Temáticas
+
+' === ESTILOS VISUALES ===
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+skinparam backgroundColor #fdfdfd
+skinparam classBackgroundColor #fff
+skinparam classBorderColor #333
+skinparam ArrowColor #333
+skinparam defaultFontName Arial
+
+' === PAQUETE SERVIDOR ===
+package "Servidor" #lightyellow {
+    
+    class ServidorPrincipal {
+        - host: str
+        - puerto: int
+        - socket_servidor
+        - clientes: dict
+        - salas: dict
+        + iniciar_servidor(): void
+        + aceptar_conexiones(): void
+        + detener_servidor(): void
+        + registrar_cliente(nombre: str, conexion): void
+        + eliminar_cliente(nombre: str): void
+        + obtener_sala(nombre: str): SalaChat
+    }
+
+    class SalaChat {
+        - nombre: str
+        - usuarios: dict
+        + agregar_usuario(usuario: UsuarioServidor): void
+        + eliminar_usuario(nombre: str): void
+        + difundir_mensaje(remitente: str, mensaje: str): void
+        + obtener_usuarios(): list
+    }
+
+    abstract class UsuarioServidor {
+        - nombre: str
+        - conexion
+        + enviar_mensaje(mensaje: str): void
+        + cerrar_conexion(): void
+    }
+
+    class ClienteHilo extends UsuarioServidor {
+        - direccion
+        - sala_actual: SalaChat
+        - protocolo: ProtocoloComunicacion
+        + escuchar(): void
+        + procesar_comando(mensaje: str): void
+        + cambiar_sala(sala: SalaChat): void
+    }
+
+    class Almacenamiento {
+        - ruta_archivo: str
+        + guardar_mensaje(sala: str, usuario: str, mensaje: str): void
+        + cargar_historial(sala: str): list
+        + inicializar_archivo(): void
+    }
+}
+
+' === PAQUETE CLIENTE ===
+package "Cliente" #lightblue {
+    
+    class ClienteChat {
+        - servidor: str
+        - puerto: int
+        - socket_cliente
+        - nombre_usuario: str
+        - sala_actual: str
+        - protocolo: ProtocoloComunicacion
+        + conectar(nombre: str): void
+        + enviar_comando(comando: str): void
+        + escuchar_respuestas(): void
+        + desconectar(): void
+    }
+
+    class InterfazGrafica {
+        - ventana
+        - campo_usuario
+        - campo_mensaje
+        - lista_salas
+        - area_chat
+        - cliente: ClienteChat
+        + iniciar(): void
+        + enviar_mensaje(): void
+        + actualizar_chat(texto: str): void
+        + seleccionar_sala(nombre: str): void
+    }
+}
+
+' === PAQUETE PROTOCOLO ===
+package "Protocolo" #lightgreen {
+    
+    class ProtocoloComunicacion {
+        + construir_comando(nombre: str, *parametros): str
+        + interpretar_mensaje(mensaje: str): dict
+        + validar_formato(mensaje: str): bool
+    }
+}
+
+' === RELACIONES Y ASOCIACIONES ===
+
+' SERVIDOR
+ServidorPrincipal *-- SalaChat : "contiene varias"
+ServidorPrincipal *-- ClienteHilo : "crea un hilo por cliente"
+ServidorPrincipal o-- Almacenamiento : "usa para guardar mensajes"
+
+SalaChat *-- UsuarioServidor : "compone usuarios activos"
+ClienteHilo --> ProtocoloComunicacion : "usa para procesar comandos"
+ClienteHilo --> SalaChat : "pertenece a"
+
+' CLIENTE
+InterfazGrafica *-- ClienteChat : "controla"
+ClienteChat --> ProtocoloComunicacion : "utiliza para estructurar mensajes"
+ClienteChat --> ServidorPrincipal : "se comunica por socket TCP"
+
+' HERENCIAS
+ClienteHilo --|> UsuarioServidor
+
+@enduml
