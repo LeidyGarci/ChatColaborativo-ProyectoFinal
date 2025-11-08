@@ -1,73 +1,54 @@
 @startuml
-title Diagrama de Secuencia - Chat Colaborativo con Salas Temáticas
+actor Usuario
 
-actor Usuario as U
+participant GUI as "ChatApp_GUI"
+participant Backend as "BackendCliente"
+participant Servidor as "ServidorChat"
 
-participant "InterfazGrafica" as IG
-participant "ClienteChat" as CC
-participant "ProtocoloComunicacion" as PC
-participant "ServidorPrincipal" as SP
-participant "UsuarioServidor (hilo)" as US
-participant "SalaChat" as SC
-participant "Almacenamiento" as AL
+== Inicio de sesión ==
+Usuario -> GUI: Ingresa nombre
+GUI -> Backend: conectar(nombre)
+Backend -> Servidor: HELLO#nombre
+Servidor -> Backend: OK#Conexión establecida
+Backend -> GUI: OK#Conexión establecida
+GUI -> GUI: Mostrar MainMenuFrame
 
-== Inicio del Sistema ==
-activate SP
-SP -> SP : Iniciar servidor TCP (bind y listen)
-note right: El servidor queda a la espera de conexiones entrantes
+== Unión a sala ==
+Usuario -> GUI: Selecciona sala o crea nueva
+GUI -> Backend: JOIN_SALA#nombre_sala
+Backend -> Servidor: JOIN_SALA#nombre_sala
+Servidor -> Servidor: Registrar usuario en sala
+Servidor -> Backend: OK#Te has unido a la sala 'SalaX'
+Servidor -> Backend: CHAT#Usuario1: mensaje_prev
+Backend -> GUI: OK#Te has unido a la sala 'SalaX'
+Backend -> GUI: CHAT#Usuario1: mensaje_prev
+GUI -> GUI: Mostrar ChatFrame y mensajes previos
 
-U -> IG : Abre aplicación cliente
-IG -> CC : Inicializar conexión TCP (socket)
-CC -> SP : Solicitud de conexión con nombre de usuario
-activate SP
-SP -> US : Crear hilo UsuarioServidor
-US -> CC : Confirmar conexión establecida
-deactivate SP
+== Envío de mensaje ==
+Usuario -> GUI: Escribe mensaje
+GUI -> Backend: MSG#texto
+Backend -> Servidor: MSG#texto
+Servidor -> Servidor: Guardar en historial
+Servidor -> Backend: CHAT#Usuario: texto
+Backend -> GUI: CHAT#Usuario: texto
+GUI -> GUI: Mostrar mensaje en ventana de chat
 
-== Selección o Creación de Sala ==
-U -> IG : Solicita lista de salas
-IG -> CC : Enviar comando LISTA_SALAS
-CC -> SP : Transmitir comando LISTA_SALAS
-SP -> US : Generar lista de salas disponibles
-US -> CC : Devolver lista de salas
-CC -> IG : Mostrar salas disponibles
+== Salida de sala ==
+Usuario -> GUI: Presiona "Salir de sala"
+GUI -> Backend: LEAVE_SALA#nombre_sala
+Backend -> Servidor: LEAVE_SALA#nombre_sala
+Servidor -> Backend: OK#Has salido de la sala 'SalaX'
+Servidor -> Backend: NOTIFY#Usuario ha salido
+Backend -> GUI: INFO#Has salido de la sala 'SalaX'
+Backend -> GUI: CHAT#Usuario ha salido
+GUI -> GUI: Volver al MainMenuFrame
 
-U -> IG : Selecciona o crea una sala
-IG -> CC : Enviar comando JOIN_SALA(nombreSala)
-CC -> SP : Solicitud de unión o creación de sala
-SP -> SC : Verificar o crear SalaChat
-SC -> US : Agregar usuario a la sala
-SC -> SC : Notificar a todos los miembros
-US -> CC : Confirmar unión a la sala
-CC -> IG : Mostrar bienvenida a la sala
+== Desconexión ==
+Usuario -> GUI: Presiona "Cerrar sesión"
+GUI -> Backend: SALIR#
+Backend -> Servidor: SALIR#
+Servidor -> Backend: DISCONNECTED#Conexión cerrada
+Backend -> GUI: DISCONNECTED#Conexión cerrada
+GUI -> GUI: Volver al LoginFrame
 
-== Comunicación en Tiempo Real ==
-U -> IG : Escribe mensaje
-IG -> CC : Preparar comando MSG(sala, texto)
-CC -> PC : Aplicar formato del protocolo
-PC -> SP : Enviar mensaje al servidor
-activate SP
-SP -> US : Recibir mensaje
-US -> AL : Registrar mensaje en historial.json
-AL --> US : Confirmación de guardado
-US -> SC : Retransmitir mensaje a usuarios de la sala
-SC -> CC : Reenviar mensaje recibido
-CC -> IG : Mostrar mensaje en la interfaz
-IG -> U : Mostrar en el área del chat
-deactivate SP
-
-== Desconexión del Usuario ==
-U -> IG : Cierra aplicación o selecciona "Salir"
-IG -> CC : Enviar comando SALIR
-CC -> SP : Notificar desconexión del usuario
-activate SP
-SP -> US : Eliminar usuario de listas
-US -> SC : Notificar a los demás usuarios
-SC -> CC : Informar salida de participante
-US -> SP : Finalizar hilo del usuario
-deactivate SP
-
-== Fin ==
-U <-- IG : Sesión finalizada
-note right of SP : El servidor sigue activo\nesperando nuevas conexiones
 @enduml

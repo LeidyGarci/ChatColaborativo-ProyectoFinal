@@ -1,89 +1,72 @@
-# Proyecto Cliente-Servidor: Chat Colaborativo con Salas Temáticas
+# Especificación del Programa “Chat Colaborativo – Salas Temáticas UTP”
 
-## 1. Introducción
-El presente documento describe la especificación funcional y técnica del sistema **Chat Colaborativo con Salas Temáticas**, diseñado como parte del desarrollo académico de la asignatura *Arquitectura Cliente–Servidor*.  
+## 1. Planteamiento del problema
+El objetivo del proyecto es crear un sistema de chat colaborativo que permita:
+- Conexión de múltiples usuarios.
+- Creación y unión a salas temáticas.
+- Comunicación en tiempo real dentro de cada sala.
+- Registro de mensajes (historial) por sala.
+- Visualización de usuarios conectados y salas activas.
+- Manejo seguro de concurrencia y comunicación cliente-servidor.
 
-El propósito de este proyecto es construir una aplicación de chat en red local, donde varios usuarios puedan conectarse simultáneamente para comunicarse en tiempo real dentro de diferentes salas temáticas.  
+Se planteó un modelo cliente-servidor, donde el cliente maneja la interfaz gráfica y la interacción del usuario, y el servidor gestiona salas, usuarios y persistencia de mensajes.
 
-El sistema se implementa bajo una arquitectura **cliente-servidor**, utilizando **sockets TCP** y **hilos (threading)** para manejar múltiples conexiones concurrentes.  
+## 2. Enfoque de diseño
+Se utilizó un enfoque modular y orientado a objetos:
+- Separación entre GUI (`interfaz.py`) y lógica de comunicación (`nucleo_cliente.py`) en el cliente.
+- Servidor centralizado que gestiona usuarios, salas y mensajes (`nucleo_servidor.py`).
+- Definición de protocolos de comunicación (`ProtocoloCliente`, `ProtocoloServidor`).
+- Persistencia de mensajes mediante JSON (`almacenamiento.py`).
 
----
+Los beneficios de este enfoque son bajo acoplamiento, escalabilidad para futuras funcionalidades y concurrencia segura con threading y locks.
 
-## 2. Objetivo General
-Diseñar e implementar un sistema de comunicación en tiempo real que permita la interacción de varios usuarios en salas de chat temáticas, garantizando la gestión ordenada de mensajes, usuarios y salas mediante una arquitectura cliente-servidor.
+## 3. Arquitectura del sistema
 
----
+Cliente:
+- `main.py`: ejecuta la aplicación GUI.
+- `interfaz.py`: GUI completa (Login, Menú, Salas, Chat, Usuarios).
+- `nucleo_cliente.py`: `BackendCliente` maneja sockets, eventos y cola para GUI.
+- `protocolo_cliente.py`: procesa mensajes entrantes `COMANDO#DATOS`.
+- `config.py`: host, puerto, buffer, codificación y mensajes de bienvenida.
 
-## 3. Objetivos Específicos
-- Implementar un **servidor multihilo** capaz de aceptar múltiples conexiones TCP de manera simultánea.  
-- Desarrollar un **cliente gráfico** en **Tkinter** que permita conectarse al servidor, crear o unirse a salas y enviar mensajes.  
-- Definir un **protocolo de comunicación** basado en comandos simples de texto para estandarizar los mensajes entre el cliente y el servidor.  
-- Crear un mecanismo de **almacenamiento persistente** utilizando archivos JSON para registrar los historiales de chat.  
-- Incluir una **validación básica de seguridad**, garantizando que cada usuario tenga un nombre único durante la sesión.  
-- Documentar completamente la arquitectura, los flujos y los componentes mediante diagramas UML y descripciones técnicas.
+Servidor:
+- `nucleo_servidor.py`: `ServidorChat` administra usuarios, salas y retransmisión de mensajes.
+- `protocolo.py`: define comandos y estructura de mensajes.
+- `almacenamiento.py`: clase `Almacenamiento` guarda mensajes en JSON con bloqueo seguro.
+- `config.py`: host, puerto, buffer, codificación y ruta de historial.
+- `datos/historial.json`: archivo de historial de mensajes.
 
----
+## 4. Flujo de funcionamiento
+1. Usuario ingresa su nombre en la GUI.
+2. Backend conecta al servidor con `HELLO#nombre`.
+3. Servidor valida nombre y confirma conexión con `OK`.
+4. Usuario puede:
+   - Unirse/crear una sala (`JOIN_SALA#nombre_sala`).
+   - Enviar mensajes (`MSG#texto`) que se retransmiten a todos y se guardan.
+   - Solicitar listas de usuarios (`USER_LIST`/`USER_LIST_ALL`) y salas (`ROOM_LIST`).
+   - Salir de una sala (`LEAVE_SALA`) o desconectarse (`SALIR`).
+5. Backend recibe respuestas del servidor y actualiza GUI en tiempo real mediante la cola `queue.Queue()`.
 
-## 4. Arquitectura del Sistema
-El sistema está compuesto por dos elementos principales: el **servidor** y los **clientes**.
+## 5. Cumplimiento de requerimientos
+- Separación GUI y lógica de comunicación lograda con `interfaz.py` y `nucleo_cliente.py`.
+- Modelo cliente-servidor implementado con `BackendCliente` y `ServidorChat` usando sockets TCP.
+- Múltiples salas y usuarios concurrentes gestionados con `threading` y locks.
+- Historial persistente implementado en `Almacenamiento` guardando mensajes por sala en JSON.
+- Protocolos claros definidos en `ProtocoloCliente` y `ProtocoloServidor`.
+- Manejo de errores y desconexiones notificado en la GUI y gestionado en el backend.
+- Modularidad y escalabilidad, permitiendo agregar nuevas funcionalidades sin cambiar toda la estructura.
 
-El **servidor** se encarga de recibir y gestionar las conexiones, mantener el control de los usuarios conectados y las salas activas, distribuir los mensajes a los participantes de cada sala y registrar los historiales en un archivo JSON.  
-Cada cliente conectado se maneja en un hilo independiente, permitiendo la comunicación simultánea entre varios usuarios.
+## 6. Decisiones de diseño clave
+- Uso de `queue.Queue()` en BackendCliente para actualizar GUI de forma segura en hilos.
+- Locks en ServidorChat y Almacenamiento para evitar condiciones de carrera.
+- Historial por sala permite mostrar mensajes previos al entrar.
+- Protocolo `COMANDO#DATOS` fácil de extender a nuevos comandos.
+- Notificaciones de eventos (`NOTIFY`) para informar a los usuarios de cambios en la sala.
 
-El **cliente** es una aplicación que se conecta al servidor mediante socket TCP.  
-Desde la interfaz gráfica desarrollada con **Tkinter**, el usuario podrá ingresar su nombre, seleccionar o crear una sala de chat, enviar y recibir mensajes, así como desconectarse cuando lo desee.  
-
-Ambos componentes se comunican mediante un **protocolo textual** estructurado por comandos delimitados con el carácter `#`, lo cual facilita la interpretación de las órdenes tanto del lado del cliente como del servidor.
-
----
-
-## 5. Requisitos Funcionales
-El sistema debe permitir que varios usuarios se conecten al mismo tiempo, cada uno identificado con un nombre único.  
-El servidor debe ofrecer la posibilidad de crear nuevas salas de chat y permitir que los usuarios se unan o abandonen las ya existentes.  
-Dentro de cada sala, los mensajes deben transmitirse en tiempo real a todos los participantes.  
-Además, el sistema debe mostrar los usuarios conectados, notificar las entradas y salidas de participantes, y guardar un historial de los mensajes enviados.  
-
-El servidor también debe manejar de forma ordenada la desconexión de los usuarios, eliminándolos de las listas de salas y notificando su salida a los demás miembros.
-
----
-
-## 6. Requisitos No Funcionales
-El sistema debe garantizar una comunicación **bidireccional y estable** entre los clientes y el servidor utilizando sockets TCP.  
-Debe tener una **baja latencia**, de manera que los mensajes se transmitan casi instantáneamente.  
-El servidor debe estar diseñado para soportar un número variable de usuarios mediante **concurrencia por hilos**.  
-La interfaz del cliente debe ser sencilla, clara y amigable, para que cualquier usuario pueda comprender su funcionamiento sin instrucciones adicionales.  
-Asimismo, el sistema debe contar con un control básico de errores y de nombres duplicados, y continuar funcionando aun si uno de los clientes se desconecta inesperadamente.
-
----
-
-## 7. Flujo General del Sistema
-1. El servidor se inicia y queda a la espera de conexiones entrantes.  
-2. Cada cliente que inicia la aplicación ingresa su nombre de usuario y establece conexión con el servidor.  
-3. Una vez conectado, el cliente puede crear una nueva sala temática o unirse a alguna existente.  
-4. Cuando un usuario se une a una sala, el servidor lo registra y notifica al resto de los participantes.  
-5. Cada mensaje enviado por un usuario se recibe primero en el servidor, el cual lo retransmite inmediatamente a todos los clientes de la misma sala.  
-6. Si un usuario cierra la aplicación o se desconecta, el servidor actualiza la lista de usuarios y notifica al resto que el participante ha salido.  
-7. Paralelamente, el servidor registra todos los mensajes en un archivo JSON ubicado en la carpeta `datos`, preservando así el historial de conversación.
-
----
-
-## 8. Componentes del Sistema
-El proyecto se organiza en una estructura de carpetas clara y modular.  
-El **servidor** contiene los módulos encargados de la conexión, la gestión de usuarios, el almacenamiento del historial y el protocolo de comunicación.  
-El **cliente** contiene los módulos que implementan la interfaz gráfica, el manejo del protocolo y la comunicación con el servidor.  
-Finalmente, existe una carpeta `docs` con toda la documentación técnica y los diagramas UML del sistema.  
-
-Entre los archivos más importantes se encuentran:
-- `servidor/main.py`: punto de inicio del servidor TCP.  
-- `servidor/nucleo_servidor.py`: contiene la lógica principal para manejar usuarios y salas.  
-- `cliente/interfaz.py`: implementa la interfaz gráfica con Tkinter.  
-- `cliente/nucleo_cliente.py`: gestiona el envío y recepción de mensajes.  
-- `datos/historial.json`: archivo donde se guarda el registro de los mensajes enviados en las salas.  
-
----
-
-## 9. Conclusión
-El proyecto **Chat Colaborativo con Salas Temáticas** permite integrar de manera práctica los conceptos fundamentales de la programación cliente-servidor, la comunicación por sockets, el manejo de hilos, la concurrencia y la persistencia de datos.
-  
-Su desarrollo contribuye al entendimiento de cómo se estructuran las aplicaciones distribuidas, enfatizando la importancia de la coordinación entre múltiples procesos, la sincronización de datos y la arquitectura modular.  
-Además, su diseño claro y documentado facilita la comprensión del flujo de información y la futura ampliación de sus funcionalidades.
+## 7. Conclusión
+El programa cumple con los objetivos planteados:
+- Soporta múltiples usuarios y comunicación en tiempo real.
+- Gestiona salas dinámicas y mantiene historial de mensajes.
+- Diseño modular, seguro y escalable.
+- Implementa protocolos claros y manejo de errores.
+- Preparado para presentación y documentación profesional.

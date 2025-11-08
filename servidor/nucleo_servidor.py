@@ -1,223 +1,299 @@
 """
-=============================================================
-Descripción general:
-Este módulo implementa el núcleo del sistema servidor del
-proyecto Chat Colaborativo con Salas Temáticas. Permite la
-comunicación en tiempo real entre múltiples clientes
-utilizando sockets TCP y manejo de hilos (threading).
+nucleo_servidor.py — Núcleo del servidor de chat colaborativo
 
-Responsabilidades principales:
-- Escuchar y aceptar conexiones entrantes.
-- Gestionar usuarios y salas de chat.
-- Recibir y retransmitir mensajes.
-- Registrar historiales en formato JSON.
-- Validar nombres únicos por conexión.
-=============================================================
+Gestiona:
+- Conexión de clientes
+- Salas temáticas
+- Envío y recepción de mensajes
+- Historial de chat
+- Listado de usuarios y salas
+
+Utiliza:
+- threading para manejar múltiples clientes simultáneamente
+- socket para comunicación TCP
+- Almacenamiento JSON para historial
+- ProtocoloServidor para construcción y parseo de mensajes
 """
 
 import socket
 import threading
-import json
-import os
+from protocolo import ProtocoloServidor
+from almacenamiento import Almacenamiento
+import config
 
-# ============================================================
-# CLASE SalaChat
-# ------------------------------------------------------------
-# Representa una sala de chat donde se agrupan usuarios.
-# Gestiona la entrada, salida y distribución de mensajes.
-# ============================================================
-class SalaChat:
-    def __init__(self, nombre):
-        self.nombre = nombre
-        self.usuarios = []  # Lista de objetos UsuarioServidor
+class ServidorChat:
+    """
+    Clase principal del servidor de chat.
 
-    def agregar_usuario(self, usuario):
-        """Agrega un nuevo usuario a la sala."""
-        self.usuarios.append(usuario)
-        self.notificar_entrada(usuario.nombre)
+    Atributos:
+        host, puerto        → Configuración de red
+        servidor            → Socket principal
+        clientes            → Diccionario {socket: nombre}
+        salas               → Diccionario {nombre_sala: [sockets]}
+        historial           → Objeto Almacenamiento para mensajes
+        _lock               → Lock para operaciones thread-safe
+    """
 
-    def eliminar_usuario(self, usuario):
-        """Elimina un usuario y notifica su salida."""
-        if usuario in self.usuarios:
-            self.usuarios.remove(usuario)
-            self.notificar_salida(usuario.nombre)
+    def __init__(self):
+        # Configuración del servidor TCP
+        self.host = config.SERVIDOR_HOST
+        self.puerto = config.SERVIDOR_PUERTO
+        self.servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.servidor.bind((self.host, self.puerto))
+        self.servidor.listen()
 
-    def notificar_entrada(self, nombre_usuario):
-        """Envía mensaje a todos los usuarios al entrar alguien nuevo."""
-        mensaje = f"[{self.nombre}] ➤ {nombre_usuario} se ha unido a la sala."
-        self.broadcast(mensaje)
-
-    def notificar_salida(self, nombre_usuario):
-        """Envía mensaje a todos los usuarios cuando alguien sale."""
-        mensaje = f"[{self.nombre}] ➤ {nombre_usuario} ha salido de la sala."
-        self.broadcast(mensaje)
-
-    def broadcast(self, mensaje):
-        """Reenvía un mensaje a todos los usuarios de la sala."""
-        for usuario in self.usuarios:
-            try:
-                usuario.conexion.sendall(mensaje.encode('utf-8'))
-            except:
-                pass  # Si un usuario desconectó abruptamente, se ignora el error
-
-
-# ============================================================
-# CLASE UsuarioServidor (hereda de threading.Thread)
-# ------------------------------------------------------------
-# Representa la atención individual de un cliente conectado.
-# Cada instancia corre en un hilo independiente.
-# ============================================================
-class UsuarioServidor(threading.Thread):
-    def __init__(self, conexion, direccion, servidor):
-        super().__init__()
-        self.conexion = conexion
-        self.direccion = direccion
-        self.servidor = servidor
-        self.nombre = None
-        self.sala = None
-        self.activo = True
-
-    def run(self):
-        """Método principal que se ejecuta al iniciar el hilo."""
-        try:
-            # Paso 1: Solicitar nombre del usuario
-            self.conexion.sendall("BIENVENIDO#Ingrese su nombre:".encode('utf-8'))
-            nombre = self.conexion.recv(1024).decode('utf-8').strip()
-
-            # Validación de nombre único
-            if not self.servidor.nombre_disponible(nombre):
-                self.conexion.sendall("ERROR#Nombre ya en uso.".encode('utf-8'))
-                self.conexion.close()
-                return
-
-            self.nombre = nombre
-            self.servidor.usuarios[self.nombre] = self
-            self.conexion.sendall("OK#Conexión establecida con el servidor.".encode('utf-8'))
-            print(f"[+] Usuario conectado: {self.nombre} desde {self.direccion}")
-
-            # Paso 2: Ciclo principal de escucha
-            while self.activo:
-                data = self.conexion.recv(1024).decode('utf-8')
-                if not data:
-                    break
-                self.procesar_comando(data.strip())
-        except:
-            pass
-        finally:
-            self.desconectar()
-
-    # --------------------------------------------------------
-    # Procesamiento de comandos según el protocolo
-    # --------------------------------------------------------
-    def procesar_comando(self, mensaje):
-        """
-        Procesa los comandos enviados por el cliente.
-        Formato esperado: COMANDO#PARAMETROS
-        Ejemplo: JOIN_SALA#General
-        """
-        if "#" in mensaje:
-            comando, *parametros = mensaje.split("#")
-        else:
-            comando = mensaje
-            parametros = []
-
-        if comando == "JOIN_SALA":
-            nombre_sala = parametros[0] if parametros else "General"
-            self.servidor.unir_a_sala(self, nombre_sala)
-
-        elif comando == "MSG":
-            if self.sala:
-                texto = parametros[0] if parametros else ""
-                mensaje_final = f"{self.nombre}: {texto}"
-                self.sala.broadcast(mensaje_final)
-                self.servidor.guardar_mensaje(self.sala.nombre, self.nombre, texto)
-
-        elif comando == "SALIR":
-            self.activo = False
-
-    # --------------------------------------------------------
-    def desconectar(self):
-        """Cierra la conexión del cliente y limpia la sesión."""
-        if self.sala:
-            self.sala.eliminar_usuario(self)
-        if self.nombre in self.servidor.usuarios:
-            del self.servidor.usuarios[self.nombre]
-        self.conexion.close()
-        print(f"[-] Usuario desconectado: {self.nombre}")
-
-
-# ============================================================
-# CLASE ServidorPrincipal
-# ------------------------------------------------------------
-# Controla todas las conexiones entrantes y las salas activas.
-# ============================================================
-class ServidorPrincipal:
-    def __init__(self, host='127.0.0.1', puerto=5000):
-        self.host = host
-        self.puerto = puerto
-        self.usuarios = {}  # {nombre: UsuarioServidor}
-        self.salas = {}     # {nombre_sala: SalaChat}
-        self.archivo_historial = os.path.join("datos", "historial.json")
-        self.cargar_historial()
-
-    # --------------------------------------------------------
-    def iniciar(self):
-        """Inicia el servidor y acepta conexiones."""
-        servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        servidor_socket.bind((self.host, self.puerto))
-        servidor_socket.listen()
         print(f"[SERVIDOR] En ejecución en {self.host}:{self.puerto}")
+        print("[SERVIDOR] Esperando conexiones...")
+
+        # Estructuras de datos
+        self.clientes = {}       # {socket: nombre}
+        self.salas = {}          # {nombre_sala: [sockets]}
+        for s in ("Juegos", "Series"):  # Salas por defecto
+            self.salas[s] = []
+
+        self.historial = Almacenamiento(config.ARCHIVO_HISTORIAL)
+        self._lock = threading.Lock()
+
+    def iniciar(self):
+        """Acepta conexiones entrantes y lanza un hilo por cliente."""
+        try:
+            while True:
+                cliente, direccion = self.servidor.accept()
+                hilo = threading.Thread(target=self.manejar_cliente,
+                                        args=(cliente, direccion), daemon=True)
+                hilo.start()
+        except KeyboardInterrupt:
+            print("[SERVIDOR] Cerrando servidor...")
+            self.servidor.close()
+
+    def manejar_cliente(self, cliente, direccion):
+        """
+        Bucle principal de manejo de cliente:
+        - Recepción de mensajes
+        - Procesamiento según protocolo
+        - Gestión de salas y desconexión
+        """
+        print(f"[NUEVA CONEXIÓN] Desde {direccion}")
+        nombre = None
+        sala_actual = None
 
         try:
             while True:
-                conexion, direccion = servidor_socket.accept()
-                usuario = UsuarioServidor(conexion, direccion, self)
-                usuario.start()
-        except KeyboardInterrupt:
-            print("\n[SERVIDOR] Finalizado manualmente.")
+                mensaje = cliente.recv(config.BUFFER).decode(config.CODIFICACION)
+                if not mensaje:
+                    break
+
+                comando, datos = ProtocoloServidor.procesar_mensaje(mensaje)
+
+                # ------------------ COMANDOS ------------------
+                if comando == "HELLO":
+                    # Registro de nombre de usuario
+                    nombre = datos
+                    if self.nombre_duplicado(nombre):
+                        cliente.send(ProtocoloServidor.construir_respuesta(
+                            "ERROR", "Nombre ya en uso."
+                        ).encode(config.CODIFICACION))
+                        cliente.close()
+                        return
+
+                    with self._lock:
+                        self.clientes[cliente] = nombre
+                    cliente.send(ProtocoloServidor.construir_respuesta(
+                        "OK", f"Conexión establecida. Bienvenido, {nombre}."
+                    ).encode(config.CODIFICACION))
+                    print(f"[+] Usuario conectado: {nombre}")
+
+                elif comando == "JOIN_SALA":
+                    # Usuario se une a una sala
+                    sala_actual = datos
+                    self.unirse_sala(cliente, sala_actual)
+
+                    # Enviar historial previo al cliente
+                    historial_sala = self.historial.obtener_historial_sala(sala_actual)
+                    if historial_sala:
+                        for msg in historial_sala:
+                            try:
+                                mensaje_hist = f"{msg['usuario']}: {msg['texto']}"
+                                resp = ProtocoloServidor.construir_respuesta("CHAT", mensaje_hist)
+                                cliente.send((resp + "\n").encode(config.CODIFICACION))
+                            except Exception:
+                                pass
+
+                elif comando == "MSG" and sala_actual:
+                    # Retransmitir mensaje a sala y guardar historial
+                    self.retransmitir(cliente, sala_actual, datos)
+                    try:
+                        usuario = self.clientes.get(cliente, "Desconocido")
+                        self.historial.guardar(sala_actual, usuario, datos)
+                    except Exception as e:
+                        print(f"[ERROR registro historial] {e}")
+
+                elif comando == "USER_LIST":
+                    self.enviar_lista_usuarios(cliente)
+
+                elif comando == "USER_LIST_ALL":
+                    # Listar todos los usuarios conectados con su sala
+                    usuarios_info = []
+                    with self._lock:
+                        for c, nombre_usuario in self.clientes.items():
+                            sala = None
+                            for s, sockets in self.salas.items():
+                                if c in sockets:
+                                    sala = s
+                                    break
+                            sala_texto = sala if sala else "Sin sala"
+                            usuarios_info.append(f"{nombre_usuario} ({sala_texto})")
+                    texto = ", ".join(usuarios_info) if usuarios_info else "No hay usuarios conectados."
+                    cliente.send(ProtocoloServidor.construir_respuesta(
+                        "USER_LIST_ALL", texto
+                    ).encode(config.CODIFICACION))
+
+                elif comando == "ROOM_LIST":
+                    self.enviar_lista_salas(cliente)
+
+                elif comando == "LEAVE_SALA":
+                    # Usuario abandona sala, notificar a otros
+                    sala = datos
+                    nombre_usuario = self.clientes.get(cliente, "Desconocido")
+                    if sala in self.salas and cliente in self.salas[sala]:
+                        for c in list(self.salas[sala]):
+                            if c != cliente:
+                                try:
+                                    c.send(ProtocoloServidor.construir_respuesta(
+                                        "NOTIFY", f"{nombre_usuario} ha salido de la sala {sala}."
+                                    ).encode(config.CODIFICACION))
+                                except Exception:
+                                    self.desconectar(c, sala)
+                        with self._lock:
+                            if cliente in self.salas[sala]:
+                                self.salas[sala].remove(cliente)
+                    cliente.send(ProtocoloServidor.construir_respuesta(
+                        "OK", f"Has salido de la sala {sala}."
+                    ).encode(config.CODIFICACION))
+
+                elif comando == "SALIR":
+                    # Desconexión voluntaria
+                    break
+
+                else:
+                    # Comando no reconocido
+                    cliente.send(ProtocoloServidor.construir_respuesta(
+                        "ERROR", f"Comando no reconocido: {comando}"
+                    ).encode(config.CODIFICACION))
+
+        except ConnectionResetError:
+            pass
+        except Exception as e:
+            print(f"[ERROR hilo cliente] {e}")
         finally:
-            servidor_socket.close()
+            # Limpiar cliente y sala
+            self.desconectar(cliente, sala_actual)
 
-    # --------------------------------------------------------
-    def unir_a_sala(self, usuario, nombre_sala):
-        """Agrega un usuario a una sala existente o nueva."""
-        if nombre_sala not in self.salas:
-            self.salas[nombre_sala] = SalaChat(nombre_sala)
-        sala = self.salas[nombre_sala]
-        usuario.sala = sala
-        sala.agregar_usuario(usuario)
-        usuario.conexion.sendall(f"OK#Unido a la sala {nombre_sala}".encode('utf-8'))
+    # ------------------ MÉTODOS AUXILIARES ------------------
 
-    # --------------------------------------------------------
-    def guardar_mensaje(self, sala, usuario, texto):
-        """Guarda los mensajes en un archivo JSON."""
-        mensaje = {"sala": sala, "usuario": usuario, "texto": texto}
+    def nombre_duplicado(self, nombre):
+        """Verifica si ya existe un usuario con ese nombre."""
+        with self._lock:
+            return nombre in self.clientes.values()
+
+    def unirse_sala(self, cliente, sala):
+        """Agrega un cliente a una sala y notifica a los demás."""
+        with self._lock:
+            if sala not in self.salas:
+                self.salas[sala] = []
+            if cliente not in self.salas[sala]:
+                self.salas[sala].append(cliente)
+
+        nombre = self.clientes.get(cliente, "Desconocido")
+        print(f"[{sala}] ➤ {nombre} se ha unido.")
+        self.retransmitir_evento(cliente, sala, f"{nombre} se ha unido a la sala.")
+        cliente.send(ProtocoloServidor.construir_respuesta(
+            "OK", f"Te has unido a la sala '{sala}'."
+        ).encode(config.CODIFICACION))
+
+    def retransmitir(self, cliente, sala, mensaje):
+        """Envía un mensaje a todos los clientes de la sala."""
+        nombre = self.clientes.get(cliente, "Desconocido")
+        texto = f"{nombre}: {mensaje}"
+        vivos = []
+        for c in list(self.salas.get(sala, [])):
+            try:
+                c.send(f"{texto}\n".encode(config.CODIFICACION))
+                vivos.append(c)
+            except Exception:
+                self.desconectar(c, sala)
+        with self._lock:
+            self.salas[sala] = vivos
+
+    def retransmitir_evento(self, cliente, sala, mensaje):
+        """Envía notificación a todos los clientes de la sala, excepto al remitente."""
+        vivos = []
+        for c in list(self.salas.get(sala, [])):
+            try:
+                if c != cliente:
+                    c.send(ProtocoloServidor.construir_respuesta(
+                        "NOTIFY", mensaje).encode(config.CODIFICACION))
+                vivos.append(c)
+            except Exception:
+                self.desconectar(c, sala)
+        with self._lock:
+            self.salas[sala] = vivos
+
+    def enviar_lista_usuarios(self, cliente):
+        """Envía al cliente la lista de usuarios y la sala en la que están."""
+        usuarios_info = []
+        with self._lock:
+            for c, nombre in self.clientes.items():
+                sala = None
+                for s, sockets in self.salas.items():
+                    if c in sockets:
+                        sala = s
+                        break
+                estado = sala if sala else "No se encuentra en una sala"
+                usuarios_info.append(f"{nombre} ({estado})")
+        texto = ", ".join(usuarios_info) if usuarios_info else "No hay usuarios conectados."
+        cliente.send(ProtocoloServidor.construir_respuesta(
+            "USER_LIST", texto
+        ).encode(config.CODIFICACION))
+
+    def enviar_lista_salas(self, cliente):
+        """Envía al cliente la lista de salas existentes."""
+        if not self.salas:
+            cliente.send(ProtocoloServidor.construir_respuesta(
+                "ROOM_LIST", "No hay salas activas."
+            ).encode(config.CODIFICACION))
+            return
+        lista = ", ".join(self.salas.keys())
+        cliente.send(ProtocoloServidor.construir_respuesta(
+            "ROOM_LIST", lista
+        ).encode(config.CODIFICACION))
+
+    def desconectar(self, cliente, sala):
+        """
+        Elimina cliente de estructuras y notifica salida de sala.
+        Cierra socket y limpia diccionarios.
+        """
+        nombre = self.clientes.get(cliente, "Usuario")
+        print(f"[-] {nombre} se ha desconectado.")
+
+        if sala and cliente in self.salas.get(sala, []):
+            try:
+                self.salas[sala].remove(cliente)
+            except ValueError:
+                pass
+            self.retransmitir(cliente, sala, f"{nombre} ha salido de la sala.")
+
+        with self._lock:
+            if cliente in self.clientes:
+                del self.clientes[cliente]
+
         try:
-            with open(self.archivo_historial, "a", encoding="utf-8") as f:
-                f.write(json.dumps(mensaje, ensure_ascii=False) + "\n")
+            cliente.close()
         except:
-            print("[ERROR] No se pudo registrar el mensaje.")
+            pass
 
-    # --------------------------------------------------------
-    def cargar_historial(self):
-        """Crea el archivo de historial si no existe."""
-        if not os.path.exists("datos"):
-            os.makedirs("datos")
-        if not os.path.exists(self.archivo_historial):
-            with open(self.archivo_historial, "w", encoding="utf-8") as f:
-                f.write("")
-
-    # --------------------------------------------------------
-    def nombre_disponible(self, nombre):
-        """Verifica si el nombre de usuario no está en uso."""
-        return nombre not in self.usuarios
-
-
-# ============================================================
-# PUNTO DE ENTRADA DIRECTO
-# ------------------------------------------------------------
-# Permite ejecutar este módulo directamente desde consola.
-# ============================================================
 if __name__ == "__main__":
-    servidor = ServidorPrincipal(host='127.0.0.1', puerto=5000)
+    # Inicia servidor si se ejecuta directamente
+    servidor = ServidorChat()
     servidor.iniciar()
