@@ -6,7 +6,7 @@ Se utiliza tanto en el núcleo del servidor como en los módulos relacionados.
 """
 
 # Dirección IP del servidor (usar la IP local de tu equipo)
-SERVIDOR_HOST = "192.168.1.70"
+SERVIDOR_HOST = "0.0.0.0"
 
 # Puerto TCP donde escuchará el servidor
 SERVIDOR_PUERTO = 5000

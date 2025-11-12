@@ -1,1 +1,27 @@
-[]
+[
+    {
+        "sala": "Series",
+        "usuario": "ñonga",
+        "texto": "hola"
+    },
+    {
+        "sala": "Series",
+        "usuario": "Leidy",
+        "texto": "Holaa"
+    },
+    {
+        "sala": "Series",
+        "usuario": "daniela",
+        "texto": "holaaaaa"
+    },
+    {
+        "sala": "Series",
+        "usuario": "Leidy",
+        "texto": "Hola"
+    },
+    {
+        "sala": "Series",
+        "usuario": "daniela",
+        "texto": ":D"
+    }
+]

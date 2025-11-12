@@ -16,7 +16,7 @@ Constantes definidas:
 """
 
 # Dirección IP del servidor al que se conectará el cliente
-HOST = "192.168.1.70"
+HOST = "10.253.21.234"
 
 # Puerto TCP del servidor
 PORT = 5000
